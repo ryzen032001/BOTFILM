@@ -1,5 +1,5 @@
 discord.py
-request
+requests
 random
 datetime
 
