@@ -208,7 +208,7 @@ async def on_ready():
     daily_now_playing_movies.start()
 
 # Task untuk menjalankan perintah now_playing_movies setiap 24 jam
-@tasks.loop(minutes=1)
+@tasks.loop(hours=1)
 async def daily_now_playing_movies():
     now = datetime.datetime.now()
     print(f"Running now_playing_movies at {now}")
