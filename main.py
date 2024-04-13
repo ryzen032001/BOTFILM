@@ -1,43 +1,134 @@
-# This example requires the 'message_content' privileged intents
-
 import os
 import discord
 from discord.ext import commands, tasks
 import random
 import requests
 import datetime
-
-
+import json  # Import library untuk bekerja dengan JSON
+import asyncio
 
 intents = discord.Intents.all()  # Enable all intents
-bot = commands.Bot(command_prefix='!', intents=intents)
-previous_movies = set()  # Set untuk menyimpan ID film yang telah ditampilkan sebelumnya
+bot = commands.Bot(command_prefix='!', intents=intents, owner_id=697422617518407779)
+previous_movies = {}  # Dictionary untuk menyimpan ID film yang telah ditampilkan sebelumnya untuk setiap server
+bot_channels = {}  # Dictionary untuk menyimpan ID saluran kerja bot untuk setiap server
+bot_allowed_roles = {}  # Dictionary untuk menyimpan daftar ID peran yang diizinkan untuk setiap server
 
-YOUR_CHANNEL_ID = None
+TMDB_API_KEY = '80a72b23fb1fd6d983c68a00959d0ab2'
+
+# Periksa apakah file data_bot.json ada dan muat data
+if os.path.exists("data_bot.json"):
+    with open("data_bot.json", "r") as file:
+        data = json.load(file)
+        
+        # Dapatkan nilai untuk bot_allowed_roles, bot_channels, dan previous_movies
+        bot_allowed_roles = {int(key): value for key, value in data.get("bot_allowed_roles", {}).items()}
+        bot_channels = {int(key): value for key, value in data.get("bot_channels", {}).items()}
+        previous_movies_serializable = data.get("previous_movies", {})
+        
+        # Konversi kembali list menjadi set
+        previous_movies = {int(server_id): set(movie_ids) for server_id, movie_ids in previous_movies_serializable.items()}
+else:
+    bot_allowed_roles = {}
+    bot_channels = {}
+    previous_movies = {}
+
+    
+
+# Fungsi untuk menyimpan data ke dalam file JSON saat bot dimatikan
+def save_data():
+    # Konversi set menjadi list sebelum menyimpan ke JSON
+    previous_movies_serializable = {str(server_id): list(movie_ids) for server_id, movie_ids in previous_movies.items()}
+    data = {
+        "bot_allowed_roles": bot_allowed_roles,
+        "bot_channels": bot_channels,
+        "previous_movies": previous_movies_serializable  # Tambahkan previous_movies ke data yang akan disimpan
+    }
+    # Simpan data ke file JSON
+    with open("data_bot.json", "w") as file:
+        json.dump(data, file)
 
 
-
-# Perintah untuk mengatur saluran kerja bot
 @bot.command()
-async def set_channel(ctx):
-    global YOUR_CHANNEL_ID
+async def set_allowed_roles(ctx, *roles: discord.Role):
+    # Memeriksa apakah pengguna adalah administrator
     if ctx.message.author.guild_permissions.administrator:
-        # Menggunakan saluran tempat perintah diberikan sebagai saluran kerja bot
-        channel = ctx.message.channel
-        YOUR_CHANNEL_ID = channel.id  # Simpan ID saluran
-        await ctx.send(f"Saluran kerja bot telah diatur ke {channel.name}")
+        # Menyimpan daftar ID peran yang diizinkan untuk server tertentu
+        server_id = ctx.guild.id
+        bot_allowed_roles[server_id] = [role.id for role in roles]
+        await ctx.send(f"Peran yang diizinkan telah diatur.")
+        save_data()
     else:
         await ctx.send("Anda tidak memiliki izin untuk menggunakan perintah ini.")
+# Perintah untuk mengecek role yang diizinkan untuk mengatur bot
+@bot.command()
+async def check_allowed_roles(ctx):
+    server_id = ctx.guild.id
+    allowed_roles = bot_allowed_roles.get(server_id)
+    if allowed_roles:
+        role_mentions = [ctx.guild.get_role(role_id).mention for role_id in allowed_roles]
+        await ctx.send(f"Role yang diizinkan untuk mengatur bot: {', '.join(role_mentions)}")
+    else:
+        await ctx.send("Tidak ada role yang diizinkan untuk mengatur bot di server ini.")
+
+@bot.command()
+async def set_channel(ctx):
+    is_admin = ctx.message.author.guild_permissions.administrator
+    is_owner = ctx.message.author.id == bot.owner_id
+    
+    # Memeriksa apakah pengguna adalah admin, pemilik bot, atau memiliki salah satu peran yang diizinkan
+    if is_admin or is_owner or any(role.id in bot_allowed_roles.get(ctx.guild.id, []) for role in ctx.author.roles):
+        channel = ctx.message.channel
+        server_id = ctx.guild.id
+        
+        # Memeriksa apakah saluran kerja bot sudah diatur sebelumnya di server ini
+        if bot_channels.get(server_id) is not None:
+            await ctx.send("Saluran kerja bot sudah diatur di server ini.")
+            return
+        
+        # Jika belum, atur saluran kerja bot
+        bot_channels[server_id] = channel.id
+        previous_movies[server_id] = set()  # Membuat set kosong untuk server yang baru
+        await ctx.send(f"Saluran kerja bot telah diatur ke {channel.name}")
+        save_data()
+    else:
+        await ctx.send("Anda tidak memiliki izin untuk menggunakan perintah ini.")
+
+@bot.command()
+async def change_channel(ctx):
+    is_admin = ctx.message.author.guild_permissions.administrator
+    is_owner = ctx.message.author.id == bot.owner_id
+    
+    # Memeriksa apakah pengguna adalah admin, pemilik bot, atau memiliki salah satu peran yang diizinkan
+    if is_admin or is_owner or any(role.id in bot_allowed_roles.get(ctx.guild.id, []) for role in ctx.author.roles):
+        channel = ctx.message.channel
+        server_id = ctx.guild.id
+        
+        # Memeriksa apakah saluran kerja bot sudah diatur sebelumnya di server ini
+        if bot_channels.get(server_id) is not None:
+            # Jika sudah diatur sebelumnya, ganti saluran kerja bot
+            bot_channels[server_id] = channel.id
+            await ctx.send(f"Saluran kerja bot telah diubah ke {channel.name}")
+            save_data()
+        else:
+            # Jika belum diatur sebelumnya, beri tahu pengguna untuk menggunakan perintah !set_channel
+            await ctx.send("Saluran kerja bot belum diatur di server ini. Silakan gunakan perintah !set_channel untuk mengatur saluran kerja bot.")
+    else:
+        await ctx.send("Anda tidak memiliki izin untuk menggunakan perintah ini.")
+
 @bot.command()
 async def check_channel(ctx):
-    global YOUR_CHANNEL_ID
-    current_channel = bot.get_channel(YOUR_CHANNEL_ID)
-    if current_channel:
-        await ctx.send(f"Bot saat ini bekerja di saluran {current_channel.name}.")
+    server_id = ctx.guild.id
+    channel_id = bot_channels.get(server_id)
+    if channel_id is not None:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            await ctx.send(f"Bot saat ini bekerja di saluran {channel.name}.")
+        else:
+            await ctx.send("Saluran tidak ditemukan.")
     else:
         await ctx.send("Bot belum diatur untuk bekerja di saluran manapun.")
 
-TMDB_API_KEY = '80a72b23fb1fd6d983c68a00959d0ab2'
+
 
 def get_now_playing_movies(api_key):
     try:
@@ -149,7 +240,10 @@ async def list_genres(ctx):
 async def show_help(ctx):
     help_message = """
     **Daftar Command:**
+    '!set_allowed_role' : admin dapat mengizinkan 1 role yang bisa ikut mengatur bot selain admin
+    '!check_allowed_role' : melihat role yang diizinkan untuk mengatur bot
     `!set_channel`: Memilih channel yang akan di tangani oleh bot.
+    `!change_channel`: Mengganti channel yang akan di tangani oleh bot.
     `!check_channel` : melihat channel yang di tangani oleh bot.
     `!recommend`: Menampilkan film yang direkomendasikan secara random.
     `!recommend_genre [nama genre]`: Menampilkan daftar film berdasarkan genre.
@@ -159,12 +253,13 @@ async def show_help(ctx):
     await ctx.send(help_message)
 
 
-# Fungsi untuk mendapatkan informasi film terbaru dan mengirimkannya ke saluran kerja bot
-async def send_now_playing_movies():
-    global YOUR_CHANNEL_ID
-    global previous_movies
-    if YOUR_CHANNEL_ID is not None:
-        channel = bot.get_channel(YOUR_CHANNEL_ID)
+
+# Function untuk mengirim film terbaru ke saluran
+async def send_now_playing_movies(server_id):
+    global previous_movies, bot_channels
+    channel_id = bot_channels.get(server_id)
+    if channel_id is not None:
+        channel = bot.get_channel(channel_id)
         if channel:
             try:
                 url = f'https://api.themoviedb.org/3/movie/now_playing?api_key={TMDB_API_KEY}&language=id-ID&page=1'
@@ -174,7 +269,9 @@ async def send_now_playing_movies():
                 if movies:
                     for movie in movies:
                         movie_id = movie.get('id')
-                        if movie_id not in previous_movies:  # Memeriksa apakah film sudah pernah ditampilkan sebelumnya
+                        if server_id not in previous_movies:  
+                            previous_movies[server_id] = set()  
+                        if movie_id not in previous_movies[server_id]:
                             movie_title = movie.get('title', 'Unknown')
                             movie_release_date = movie.get('release_date', 'Unknown')
                             movie_poster_path = movie.get('poster_path')
@@ -186,7 +283,8 @@ async def send_now_playing_movies():
                                 await channel.send(embed=embed)
                             else:
                                 await channel.send(f"**{movie_title}** (Rilis: {movie_release_date})\n{movie_overview}")
-                            previous_movies.add(movie_id)  # Menambahkan ID film ke set film yang telah ditampilkan sebelumnya
+                            previous_movies[server_id].add(movie_id)
+                            save_data()
                 else:
                     await channel.send("Maaf, tidak dapat menemukan informasi film terbaru saat ini.")
             except requests.exceptions.RequestException as e:
@@ -195,28 +293,60 @@ async def send_now_playing_movies():
         else:
             print("Saluran tidak ditemukan.")
     else:
-        print("Saluran kerja bot belum diatur.")
+        print("Saluran kerja bot belum diatur untuk server ini.")
+
+
 
 # Perintah untuk menampilkan film terbaru yang sedang tayang
 @bot.command()
 async def now_playing_movies(ctx):
-    await send_now_playing_movies()
+    server_id = ctx.guild.id
+    await send_now_playing_movies(server_id)
 
 @bot.event
 async def on_ready():
     print('Bot is ready.')
     daily_now_playing_movies.start()
 
-# Task untuk menjalankan perintah now_playing_movies setiap 24 jam
-@tasks.loop(hours=1)
+# Task untuk menjalankan perintah now_playing_movies setiap 6 jam
+@tasks.loop(hours=6)
 async def daily_now_playing_movies():
     now = datetime.datetime.now()
     print(f"Running now_playing_movies at {now}")
-    await send_now_playing_movies()
+    for server_id in bot_channels:
+        await send_now_playing_movies(server_id)
 
 @daily_now_playing_movies.before_loop
 async def before_daily_now_playing_movies():
     await bot.wait_until_ready()
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()  # Hanya bisa dipicu melalui pesan pribadi
+async def maintenance(ctx, *, message: str = "Maintenance will start in 3 minutes."):
+    # Mengecek apakah perintah dipicu dari pesan pribadi
+    if ctx.guild is None:
+        # Jika dipicu dari pesan pribadi, kirim pengumuman ke semua server
+        for server_id, channel_id in bot_channels.items():
+            channel = bot.get_channel(channel_id)
+            if channel:
+                await channel.send(f"🛠️ **Maintenance Notice:** {message}")
+            else:
+                print(f"Failed to find the designated channel for server ID {server_id}.")
+        await ctx.send("Maintenance notice has been sent to all server channels.")
+        #Menghitung mundur selama 3 menit
+        await asyncio.sleep(180)
+    
+        # Mematikan bot
+        await bot.close()
+        
+
+
+
+
+@bot.event
+async def on_disconnect():
+    save_data()
 
 
 bot.run(os.environ["DISCORD_TOKEN"])
