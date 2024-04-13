@@ -6,6 +6,8 @@ import requests
 import datetime
 import json  # Import library untuk bekerja dengan JSON
 import asyncio
+from github import Github
+
 
 intents = discord.Intents.all()  # Enable all intents
 bot = commands.Bot(command_prefix='!', intents=intents, owner_id=697422617518407779)
@@ -14,6 +16,12 @@ bot_channels = {}  # Dictionary untuk menyimpan ID saluran kerja bot untuk setia
 bot_allowed_roles = {}  # Dictionary untuk menyimpan daftar ID peran yang diizinkan untuk setiap server
 
 TMDB_API_KEY = '80a72b23fb1fd6d983c68a00959d0ab2'
+
+# Ambil token GitHub dari variabel lingkungan
+github_token = os.environ(TOKEN_GITHUB)
+
+# Autentikasi dengan token GitHub
+g = Github(github_token)
 
 # Periksa apakah file data_bot.json ada dan muat data
 if os.path.exists("data_bot.json"):
@@ -36,6 +44,11 @@ else:
 
 # Fungsi untuk menyimpan data ke dalam file JSON saat bot dimatikan
 def save_data():
+
+    repo_owner = 'ryzen032001'
+    repo_name = 'BOTFILM'
+    repo = g.get_user(repo_owner).get_repo(repo_name)
+
     # Konversi set menjadi list sebelum menyimpan ke JSON
     previous_movies_serializable = {str(server_id): list(movie_ids) for server_id, movie_ids in previous_movies.items()}
     data = {
@@ -43,9 +56,17 @@ def save_data():
         "bot_channels": bot_channels,
         "previous_movies": previous_movies_serializable  # Tambahkan previous_movies ke data yang akan disimpan
     }
-    # Simpan data ke file JSON
-    with open("data_bot.json", "w") as file:
-        json.dump(data, file)
+
+    file_path = "data_bot.json"
+    file_content = json.dumps(data, indent=4)  # Isi file JSON yang ingin Anda tulis atau ubah
+
+    try:
+        # Mencoba untuk mengambil konten file yang ada
+        contents = repo.get_contents(file_path)
+        repo.update_file(contents.path, "Update data", file_content, contents.sha)
+    except Exception as e:
+        # Jika file tidak ada, membuat file baru
+        repo.create_file(file_path, "Create data", file_content)
 
 
 @bot.command()
@@ -347,6 +368,5 @@ async def maintenance(ctx, *, message: str = "Maintenance will start in 3 minute
 @bot.event
 async def on_disconnect():
     save_data()
-
 
 bot.run(os.environ["DISCORD_TOKEN"])
