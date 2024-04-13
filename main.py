@@ -18,7 +18,7 @@ bot_allowed_roles = {}  # Dictionary untuk menyimpan daftar ID peran yang diizin
 TMDB_API_KEY = '80a72b23fb1fd6d983c68a00959d0ab2'
 
 # Ambil token GitHub dari variabel lingkungan
-github_token = os.environ(TOKEN_GITHUB)
+github_token = os.environ("TOKEN_GITHUB")
 
 # Autentikasi dengan token GitHub
 g = Github(github_token)
